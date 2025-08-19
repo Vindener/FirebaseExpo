@@ -4,7 +4,8 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  View,Image
+  View,
+  Image,
 } from "react-native";
 import "expo-dev-client";
 import {
@@ -14,7 +15,10 @@ import {
   onAuthStateChanged,
   signOut,
 } from "@react-native-firebase/auth";
-import { GoogleSignin, GoogleSigninButton } from "@react-native-google-signin/google-signin";
+import {
+  GoogleSignin,
+} from "@react-native-google-signin/google-signin";
+import FirestoreDemo from "./src/FirestoreDemo";
 
 export default function App() {
   // Set an initializing state whilst Firebase connects
@@ -27,7 +31,7 @@ export default function App() {
   });
 
   async function logout() {
-    signOut(getAuth()).then(() => console.log('User signed out!'));
+    signOut(getAuth()).then(() => console.log("User signed out!"));
   }
 
   async function onGoogleButtonPress() {
@@ -55,7 +59,7 @@ export default function App() {
     return signInWithCredential(getAuth(), googleCredential);
   }
 
-   // Handle user state changes
+  // Handle user state changes
   function handleAuthStateChanged(user) {
     setUser(user);
     if (initializing) setInitializing(false);
@@ -72,12 +76,9 @@ export default function App() {
     return (
       <SafeAreaView style={styles.container}>
         <Text>Login please</Text>
-        <GoogleSigninButton
-          onPress={() =>
-            onGoogleButtonPress().then(() =>
-              console.log("Signed in with Google!")
-            )
-          }
+        <Button
+          title="Sign in with Google"
+          onPress={() => onGoogleButtonPress()}
         />
       </SafeAreaView>
     );
@@ -86,8 +87,12 @@ export default function App() {
   return (
     <View style={styles.container}>
       <Text>Welcome, {user.email} !</Text>
-      <Image source={{uri: user.photoURL}} style={{height:300,width:300,borderRadius:150,margin:50}}/>
+      <Image
+        source={{ uri: user.photoURL }}
+        style={{ height: 300, width: 300, borderRadius: 150, margin: 50 }}
+      />
       <Button title="Sign Out" onPress={() => logout()} />
+        <FirestoreDemo />
     </View>
   );
 }
@@ -97,6 +102,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     alignItems: "center",
-    paddingTop:60,
+    paddingTop: 60,
   },
 });
