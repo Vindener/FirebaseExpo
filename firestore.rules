@@ -1,0 +1,168 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function isParticipant(conn) {
+      return isSignedIn() && (uid() == conn.fromUid || uid() == conn.toUid);
+    }
+    
+   // Participant via connections/{id}
+  function isConnParticipant(id) {
+    return isSignedIn()
+      && exists(/databases/$(database)/documents/connections/$(id))
+      && (
+        get(/databases/$(database)/documents/connections/$(id)).data.fromUid == uid() ||
+        get(/databases/$(database)/documents/connections/$(id)).data.toUid == uid()
+      );
+  }
+  // Participant inferred from shared doc fields (fallback for list streams)
+  function isDocParticipantByFields() {
+    return isSignedIn()
+      && (uid() == resource.data.fromUid || uid() == resource.data.toUid);
+  }
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && uid() == userId;
+      allow update: if isSignedIn() && uid() == userId;
+      allow delete: if isSignedIn() && uid() == userId;
+    }
+
+
+   match /connections/{pairId} { 
+      allow list: if isSignedIn();
+      allow get: if isSignedIn() &&
+        (resource.data.fromUid == uid() || resource.data.toUid == uid());
+
+      allow create: if isSignedIn()
+        && request.resource.data.fromUid == uid()
+        && request.resource.data.status == "pending";
+
+      allow update: if isSignedIn()
+        && (resource.data.fromUid == uid() || resource.data.toUid == uid())
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid;
+
+      allow delete: if isSignedIn()
+        && (resource.data.fromUid == uid() || resource.data.toUid == uid());
+    }
+
+    /* ----- Shared docs ----- */
+   match /sharedDocs/{id} {
+  // allow read/list if user is participant (either via connections doc OR via doc fields)
+  allow get, list: if isConnParticipant(id) || isDocParticipantByFields();
+
+  // create: only participants, fields restricted, participants must match connection
+  allow create: if (isConnParticipant(id) || isDocParticipantByFields())
+    && request.resource.data.keys().hasOnly(['fromUid','toUid','text','version','lastEditedBy','createdAt','updatedAt'])
+    && request.resource.data.fromUid == get(/databases/$(database)/documents/connections/$(id)).data.fromUid
+    && request.resource.data.toUid == get(/databases/$(database)/documents/connections/$(id)).data.toUid;
+
+  // update: only content fields; participants immutable
+  allow update: if (isConnParticipant(id) || isDocParticipantByFields())
+    && request.resource.data.diff(resource.data).changedKeys().hasOnly(['text','version','lastEditedBy','updatedAt'])
+    && request.resource.data.fromUid == resource.data.fromUid
+    && request.resource.data.toUid == resource.data.toUid;
+
+  allow delete: if isConnParticipant(id) || isDocParticipantByFields();
+}
+
+/* Personal docs (owner-first, share later) */
+match /docs/{docId} {
+  function isOwner() {
+    return isSignedIn() && (uid() in resource.data.owners);
+  }
+  function isEditor() {
+    return isSignedIn() && (resource.data.editorsMap[uid()] == true);
+  }
+  function canRW() { return isOwner() || isEditor(); }
+
+  // Reading/listing — owners/editors only
+  allow get, list: if canRW();
+
+  // Creation — as it was (strict scheme ok on create))
+  allow create: if isSignedIn()
+    && request.resource.data.keys().hasOnly(
+         ['owners','editorsMap','text','version','lastEditedBy','createdAt','updatedAt']
+       )
+    && request.resource.data.owners.size() > 0
+    && uid() in request.resource.data.owners;
+
+  // Updates: either regular edits by participants or a special ‘claim’ by the recipient
+  allow update: if isSignedIn() && (
+    // ----- A) simple changes -----
+    (
+      canRW() &&
+      // change only these fields (any combination)
+      request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['text','version','lastEditedBy','updatedAt','owners','editorsMap','__shareId']) &&
+      // ACL remains unchanged, OR is changed by the owner
+      (
+        !(
+          request.resource.data.owners != resource.data.owners ||
+          request.resource.data.editorsMap != resource.data.editorsMap
+        ) || isOwner()
+      )
+    )
+    ||
+    // ----- B) claim after accepted -----
+    (
+      // only change editorsMap (our key), updatedAt, __shareId
+      request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(['editorsMap','updatedAt','__shareId']) &&
+      request.resource.data.editorsMap.diff(resource.data.editorsMap)
+        .changedKeys().hasOnly([uid()]) &&
+      request.resource.data.editorsMap[uid()] == true &&
+      // check the existing accepted request addressed to me, specifically for this docId.
+      exists(/databases/$(database)/documents/docShares/$(request.resource.data.__shareId)) &&
+      get(/databases/$(database)/documents/docShares/$(request.resource.data.__shareId)).data.status == 'accepted' &&
+      get(/databases/$(database)/documents/docShares/$(request.resource.data.__shareId)).data.toUid == uid() &&
+      get(/databases/$(database)/documents/docShares/$(request.resource.data.__shareId)).data.docId == docId
+    )
+  );
+
+  // Delete — owner only
+  allow delete: if isOwner();
+}
+
+
+/* ---- Share requests for docs ---- */
+match /docShares/{shareId} {
+  function isParticipantShare() {
+    return isSignedIn() && (uid() == resource.data.fromUid || uid() == resource.data.toUid);
+  }
+
+  // Read & list: participants only
+  allow get, list: if isParticipantShare();
+
+  // Create: by owner only, pending status
+  allow create: if isSignedIn()
+    && request.resource.data.keys().hasOnly(['docId','fromUid','toUid','status','createdAt','updatedAt'])
+    && request.resource.data.fromUid == uid()
+    && request.resource.data.toUid != uid()
+    && request.resource.data.status == 'pending'
+    && exists(/databases/$(database)/documents/docs/$(request.resource.data.docId))
+    && (uid() in get(/databases/$(database)/documents/docs/$(request.resource.data.docId)).data.owners);
+
+  // Update status:
+  // - recipient: pending -> accepted|declined
+  // - owner: pending -> cancelled
+  allow update: if isParticipantShare()
+    && request.resource.data.docId == resource.data.docId
+    && request.resource.data.fromUid == resource.data.fromUid
+    && request.resource.data.toUid == resource.data.toUid
+    && request.resource.data.keys().hasOnly(['docId','fromUid','toUid','status','createdAt','updatedAt'])
+    && (
+         (uid() == resource.data.toUid && resource.data.status == 'pending' && request.resource.data.status in ['accepted','declined'])
+         ||
+         (uid() == resource.data.fromUid && resource.data.status == 'pending' && request.resource.data.status == 'cancelled')
+       );
+
+  // Delete (optional): participants
+  allow delete: if isParticipantShare();
+}
+    
+  }
+}
