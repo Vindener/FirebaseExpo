@@ -6,6 +6,7 @@ import {
   Text,
   View,
   Image,
+  ScrollView,
 } from "react-native";
 import "expo-dev-client";
 import {
@@ -19,6 +20,10 @@ import {
   GoogleSignin,
 } from "@react-native-google-signin/google-signin";
 import FirestoreDemo from "./src/FirestoreDemo";
+import SharingDemo from "./screens/SharingDemo";
+import SharedDocsList from "./screens/SharedDocsList";
+import PersonalDocsList from "./screens/PersonalDocsList";
+import DocShareRequests from "./screens/DocShareRequests";
 
 export default function App() {
   // Set an initializing state whilst Firebase connects
@@ -85,15 +90,19 @@ export default function App() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <Text>Welcome, {user.email} !</Text>
       <Image
         source={{ uri: user.photoURL }}
         style={{ height: 300, width: 300, borderRadius: 150, margin: 50 }}
       />
       <Button title="Sign Out" onPress={() => logout()} />
-        <FirestoreDemo />
-    </View>
+      <PersonalDocsList />
+      <SharedDocsList />
+      <DocShareRequests />
+      {/* <FirestoreDemo /> */}
+      <SharingDemo />
+    </ScrollView>
   );
 }
 
@@ -101,7 +110,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
-    alignItems: "center",
+    // alignItems: "center",
     paddingTop: 60,
+    paddingRight:8,
+    paddingLeft:8,
   },
 });
